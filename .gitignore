@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+*.tar.gz
+.terraform/
+*.tfstate*
+.terraform.lock.hcl
+venv/
+.venv/

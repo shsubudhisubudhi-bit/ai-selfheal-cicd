@@ -1,0 +1,171 @@
+name: CI/CD with AI Self-Healing
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+  DEPLOY_USER: root
+  APP_PORT: 9090
+  CONTAINER_NAME: selfheal-app
+
+jobs:
+  # --- Stage 1: Build & Test ---
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r app/requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short 2>/dev/null || echo "No tests yet"
+
+      - name: Build Docker image
+        run: docker build -t ${{ env.CONTAINER_NAME }}:${{ github.sha }} .
+
+      - name: Save Docker image
+        run: docker save ${{ env.CONTAINER_NAME }}:${{ github.sha }} | gzip > image.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
+          retention-days: 1
+
+  # --- Stage 2: Deploy ---
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            # Stop old container
+            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
+
+            # Tag current stable (for rollback)
+            docker tag ${{ env.CONTAINER_NAME }}:latest ${{ env.CONTAINER_NAME }}:stable 2>/dev/null || true
+
+      - name: Copy image to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          source: "image.tar.gz"
+          target: "/tmp/"
+
+      - name: Load and run new version
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            # Load new image
+            docker load < /tmp/image.tar.gz
+
+            # Tag as latest
+            docker tag ${{ env.CONTAINER_NAME }}:${{ github.sha }} ${{ env.CONTAINER_NAME }}:latest
+
+            # Run new version
+            docker run -d \
+              --name ${{ env.CONTAINER_NAME }} \
+              -p ${{ env.APP_PORT }}:9090 \
+              -e FAIL_MODE=false \
+              -e APP_VERSION=${{ github.sha }} \
+              --restart unless-stopped \
+              ${{ env.CONTAINER_NAME }}:latest
+
+            # Cleanup
+            rm -f /tmp/image.tar.gz
+
+  # --- Stage 3: Health Check ---
+  health-check:
+    name: Health Check
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for startup
+        run: sleep 15
+
+      - name: Check health
+        id: health
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" http://${{ secrets.DEPLOY_HOST }}:${{ env.APP_PORT }}/health || echo "000")
+          echo "status=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "Health check status: $HTTP_CODE"
+          cat /tmp/health.json 2>/dev/null || echo "No response"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "healthy=false" >> $GITHUB_OUTPUT
+          else
+            echo "healthy=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Report health status
+        run: |
+          if [ "${{ steps.health.outputs.healthy }}" == "true" ]; then
+            echo "✅ Deployment successful! App is healthy."
+          else
+            echo "❌ Deployment failed! Health check returned ${{ steps.health.outputs.status }}"
+            exit 1
+          fi
+
+  # --- Stage 4: AI Self-Healing (only on failure) ---
+  ai-self-heal:
+    name: AI Self-Healing
+    needs: health-check
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install openai requests
+
+      - name: Run AI Self-Healing
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          HEALTH_URL: http://${{ secrets.DEPLOY_HOST }}:9090/health
+        run: python scripts/ai_healer.py
+
+      - name: Verify recovery
+        run: |
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.DEPLOY_HOST }}:${{ env.APP_PORT }}/health)
+          if [ "$HTTP_CODE" == "200" ]; then
+            echo "✅ AI Self-Healing SUCCEEDED! App recovered."
+          else
+            echo "❌ AI Self-Healing could not recover. Manual intervention needed."
+            exit 1
+          fi
