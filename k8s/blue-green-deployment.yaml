@@ -1,0 +1,240 @@
+# ============================================================
+# Blue/Green Deployment Strategy for AI Self-Healing CI/CD
+# ============================================================
+# This manifest defines two identical deployments (blue & green)
+# and a service that toggles between them via the "slot" label.
+#
+# Usage:
+#   1. Deploy both blue and green (one active, one idle)
+#   2. Deploy new version to the idle slot
+#   3. Run health checks against the idle slot
+#   4. Switch traffic by patching the service selector
+#   5. If unhealthy, switch back instantly (zero-downtime rollback)
+#
+# Switch command:
+#   kubectl patch svc selfheal-app-bg -n selfheal \
+#     -p '{"spec":{"selector":{"slot":"green"}}}'
+# ============================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: selfheal
+  labels:
+    name: selfheal
+    team: platform
+---
+# ==================== BLUE DEPLOYMENT ====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selfheal-app-blue
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    slot: blue
+    version: v1
+    team: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: selfheal-app
+      slot: blue
+  template:
+    metadata:
+      labels:
+        app: selfheal-app
+        slot: blue
+        version: v1
+        team: platform
+    spec:
+      containers:
+        - name: selfheal-app
+          image: selfhealacr.azurecr.io/selfheal-app:blue
+          ports:
+            - containerPort: 9090
+              protocol: TCP
+              name: http
+          env:
+            - name: PORT
+              value: "9090"
+            - name: FAIL_MODE
+              value: "false"
+            - name: APP_VERSION
+              value: "blue-v1"
+            - name: DEPLOY_SLOT
+              value: "blue"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 10
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+---
+# ==================== GREEN DEPLOYMENT ====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selfheal-app-green
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    slot: green
+    version: v1
+    team: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: selfheal-app
+      slot: green
+  template:
+    metadata:
+      labels:
+        app: selfheal-app
+        slot: green
+        version: v1
+        team: platform
+    spec:
+      containers:
+        - name: selfheal-app
+          image: selfhealacr.azurecr.io/selfheal-app:green
+          ports:
+            - containerPort: 9090
+              protocol: TCP
+              name: http
+          env:
+            - name: PORT
+              value: "9090"
+            - name: FAIL_MODE
+              value: "false"
+            - name: APP_VERSION
+              value: "green-v1"
+            - name: DEPLOY_SLOT
+              value: "green"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 10
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+---
+# ==================== PRODUCTION SERVICE ====================
+# This service routes traffic to whichever slot is active.
+# Toggle by patching the "slot" selector value.
+apiVersion: v1
+kind: Service
+metadata:
+  name: selfheal-app-bg
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    team: platform
+  annotations:
+    selfheal/active-slot: "blue"
+    selfheal/last-switch: ""
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 9090
+      protocol: TCP
+      name: http
+  # Active slot — change "blue" to "green" to switch traffic
+  selector:
+    app: selfheal-app
+    slot: blue
+---
+# ==================== PREVIEW SERVICE ====================
+# Always points to the INACTIVE slot for pre-switch testing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: selfheal-app-preview
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    role: preview
+    team: platform
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 9090
+      protocol: TCP
+      name: http
+  # Preview slot — opposite of production
+  selector:
+    app: selfheal-app
+    slot: green
+---
+# ==================== CONFIGMAP: SLOT STATE ====================
+# Tracks which slot is currently active. Read by the switch script.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blue-green-state
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    team: platform
+data:
+  active-slot: "blue"
+  last-switch-timestamp: ""
+  last-switch-reason: ""
+  blue-version: "v1"
+  green-version: "v1"

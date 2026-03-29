@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selfheal-app
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: selfheal-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: selfheal-app
+        version: v1
+    spec:
+      containers:
+        - name: selfheal-app
+          image: selfhealacr.azurecr.io/selfheal-app:latest
+          ports:
+            - containerPort: 9090
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "9090"
+            - name: FAIL_MODE
+              value: "false"
+            - name: APP_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['version']
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: selfheal-app-svc
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 9090
+      protocol: TCP
+      name: http
+  selector:
+    app: selfheal-app
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: selfheal
+  labels:
+    name: selfheal
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: selfheal-app-ingress
+  namespace: selfheal
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: selfheal-app-svc
+                port:
+                  number: 80

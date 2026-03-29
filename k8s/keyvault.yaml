@@ -1,0 +1,70 @@
+# --- Azure Key Vault Integration ---
+# Prerequisites:
+# 1. Enable Key Vault addon on AKS:
+#    az aks enable-addons --addons azure-keyvault-secrets-provider --name ai-selfheal-aks --resource-group ai-selfheal-rg
+#
+# 2. Create Key Vault:
+#    az keyvault create --name selfheal-kv --resource-group ai-selfheal-rg --location eastus
+#
+# 3. Store secrets:
+#    az keyvault secret set --vault-name selfheal-kv --name openai-api-key --value "YOUR_KEY"
+#    az keyvault secret set --vault-name selfheal-kv --name app-secret --value "YOUR_SECRET"
+#
+# 4. Grant AKS access:
+#    az keyvault set-policy --name selfheal-kv \
+#      --spn $(az aks show -g ai-selfheal-rg -n ai-selfheal-aks --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId -o tsv) \
+#      --secret-permissions get
+
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: azure-keyvault-secrets
+  namespace: selfheal
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: ""  # Will be auto-populated by AKS addon
+    keyvaultName: "selfheal-kv"
+    tenantId: ""  # Your Azure tenant ID
+    objects: |
+      array:
+        - |
+          objectName: openai-api-key
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: app-secret
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+    - secretName: selfheal-secrets
+      type: Opaque
+      data:
+        - objectName: openai-api-key
+          key: OPENAI_API_KEY
+        - objectName: app-secret
+          key: APP_SECRET
+---
+# Updated Deployment patch to use Key Vault secrets
+# Add to deployment.yaml spec.template.spec:
+#
+# volumes:
+#   - name: secrets-store
+#     csi:
+#       driver: secrets-store.csi.k8s.io
+#       readOnly: true
+#       volumeAttributes:
+#         secretProviderClass: azure-keyvault-secrets
+#
+# containers:
+#   - name: selfheal-app
+#     volumeMounts:
+#       - name: secrets-store
+#         mountPath: "/mnt/secrets"
+#         readOnly: true
+#     envFrom:
+#       - secretRef:
+#           name: selfheal-secrets

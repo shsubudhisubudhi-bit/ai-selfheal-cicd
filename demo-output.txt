@@ -1,0 +1,57 @@
+Resetting to clean v1.0.0...
+
+=== STEP 1: App is healthy ===
+{
+    "status": "healthy",
+    "timestamp": "2026-03-28T18:43:16.015302",
+    "uptime": "ok",
+    "version": "1.0.0"
+}
+
+=== STEP 2: Deploying broken version ===
+=== STEP 3: Health check FAILS ===
+{
+    "error": "Application is in failure mode",
+    "status": "unhealthy",
+    "timestamp": "2026-03-28T18:43:20.931117"
+}
+
+=== STEP 4: AI Self-Healing ===
+
+============================================================
+AI SELF-HEALING PIPELINE
+Timestamp: 2026-03-28T18:43:22.804537
+============================================================
+
+[STEP 1] Checking application health...
+  Status: 500
+  Healthy: False
+
+[STEP 2] Gathering application logs...
+  Log lines collected: 7
+
+[STEP 3] Sending to AI for analysis...
+
+[STEP 4] Executing AI decision...
+
+============================================================
+AI DECISION: ROLLBACK
+REASON: The application is consistently failing health checks due to being in failure mode, indicating a potential code or configuration issue.
+CONFIDENCE: 90%
+SUGGESTED FIX: Investigate recent code changes or configuration updates that could have caused the application to enter failure mode and fix the underlying issue before redeploying.
+============================================================
+
+[ACTION] Rolling back to previous stable version...
+[SUCCESS] Rollback successful! App is healthy on previous version.
+
+[RESULT] Self-healing SUCCEEDED
+
+=== STEP 5: App recovered ===
+{
+    "status": "healthy",
+    "timestamp": "2026-03-28T18:43:36.451737",
+    "uptime": "ok",
+    "version": "rollback"
+}
+
+=== DEMO COMPLETE ===

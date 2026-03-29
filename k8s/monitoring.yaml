@@ -1,0 +1,390 @@
+# ============================================================
+# Prometheus + Grafana Monitoring Stack for AI Self-Healing CI/CD
+# ============================================================
+# Install via Helm (one-time):
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     --set grafana.adminPassword=admin123 \
+#     --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
+# ============================================================
+
+---
+# ==================== SERVICE MONITOR ====================
+# Scrapes the /health endpoint every 15 seconds for metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: selfheal-app-monitor
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    version: v1
+    team: platform
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: selfheal-app
+  endpoints:
+    - port: http
+      path: /health
+      interval: 15s
+      scrapeTimeout: 10s
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: "go_.*"
+          action: drop
+  namespaceSelector:
+    matchNames:
+      - selfheal
+
+---
+# ==================== ALERT RULES ====================
+# Four critical alert rules for automated incident detection
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: selfheal-app-alerts
+  namespace: selfheal
+  labels:
+    app: selfheal-app
+    version: v1
+    team: platform
+    release: monitoring
+spec:
+  groups:
+    - name: selfheal-app.rules
+      interval: 30s
+      rules:
+        # ALERT 1: Application is completely down
+        - alert: AppUnhealthy
+          expr: up{job="selfheal-app-svc"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            component: selfheal-app
+          annotations:
+            summary: "Self-heal app is DOWN ({{ $labels.instance }})"
+            description: >-
+              The self-heal application instance {{ $labels.instance }}
+              has been unreachable for more than 1 minute.
+              This will trigger the AI self-healing pipeline.
+            runbook_url: "https://github.com/shsubudhisubudhi-bit/ai-selfheal-cicd/blob/main/docs/ARCHITECTURE.md"
+            dashboard_url: "http://grafana:3000/d/selfheal/ai-self-healing-pipeline"
+
+        # ALERT 2: Error rate exceeds threshold
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{job="selfheal-app-svc", status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{job="selfheal-app-svc"}[5m]))
+            ) > 0.1
+          for: 2m
+          labels:
+            severity: warning
+            team: platform
+            component: selfheal-app
+          annotations:
+            summary: "High error rate detected ({{ $value | humanizePercentage }})"
+            description: >-
+              More than 10% of requests to the self-heal application are
+              returning 5xx errors over the last 5 minutes.
+              Current error rate: {{ $value | humanizePercentage }}.
+
+        # ALERT 3: CPU usage above 80% for sustained period
+        - alert: HighCPUUsage
+          expr: |
+            (
+              sum(rate(container_cpu_usage_seconds_total{container="selfheal-app", namespace="selfheal"}[5m]))
+              by (pod)
+              /
+              sum(kube_pod_container_resource_limits{container="selfheal-app", namespace="selfheal", resource="cpu"})
+              by (pod)
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            component: selfheal-app
+          annotations:
+            summary: "High CPU usage on pod {{ $labels.pod }}"
+            description: >-
+              Container CPU usage for pod {{ $labels.pod }} is above 80%
+              of its limit for 5 minutes. Consider scaling horizontally
+              or increasing resource limits.
+
+        # ALERT 4: Pod is crash-looping
+        - alert: PodRestarting
+          expr: |
+            increase(
+              kube_pod_container_status_restarts_total{
+                container="selfheal-app",
+                namespace="selfheal"
+              }[1h]
+            ) > 3
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+            component: selfheal-app
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarting frequently"
+            description: >-
+              Pod {{ $labels.pod }} has restarted {{ $value }} times
+              in the last hour. This indicates a crash loop that
+              the AI healer should investigate.
+
+---
+# ==================== GRAFANA DASHBOARD ====================
+# Auto-provisioned by Grafana's sidecar when the label grafana_dashboard=1 is set.
+# Contains 6 panels covering health, throughput, errors, CPU, memory, and restarts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: selfheal-grafana-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    app: selfheal-app
+    team: platform
+data:
+  selfheal-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "description": "AI Self-Healing CI/CD Pipeline - Application Health & Performance",
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "id": 1,
+          "title": "App Health Status",
+          "description": "1 = healthy, 0 = down. Triggers AI healer when 0.",
+          "type": "stat",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "up{job=\"selfheal-app-svc\"}",
+              "legendFormat": "{{ instance }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" } } },
+                { "type": "value", "options": { "1": { "text": "HEALTHY", "color": "green" } } }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "auto",
+            "reduceOptions": { "calcs": ["lastNotNull"] }
+          }
+        },
+        {
+          "id": 2,
+          "title": "Request Rate (req/s)",
+          "description": "Total HTTP request throughput across all endpoints.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 6, "y": 0 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{job=\"selfheal-app-svc\"}[5m])) by (status)",
+              "legendFormat": "HTTP {{ status }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 20,
+                "pointSize": 5,
+                "spanNulls": true
+              },
+              "unit": "reqps"
+            }
+          },
+          "options": {
+            "tooltip": { "mode": "multi" },
+            "legend": { "displayMode": "table", "placement": "bottom" }
+          }
+        },
+        {
+          "id": 3,
+          "title": "Error Rate (%)",
+          "description": "Percentage of 5xx responses. Alert fires above 10%.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{job=\"selfheal-app-svc\", status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"selfheal-app-svc\"}[5m])) * 100",
+              "legendFormat": "Error %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 30
+              },
+              "unit": "percent",
+              "color": { "mode": "fixed", "fixedColor": "red" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 5 },
+                  { "color": "red", "value": 10 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "Pod CPU Usage",
+          "description": "CPU consumption per pod as percentage of limit.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{container=\"selfheal-app\", namespace=\"selfheal\"}[5m])) by (pod) / sum(kube_pod_container_resource_limits{container=\"selfheal-app\", namespace=\"selfheal\", resource=\"cpu\"}) by (pod) * 100",
+              "legendFormat": "{{ pod }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 15
+              },
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 60 },
+                  { "color": "red", "value": 80 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "Pod Memory Usage",
+          "description": "Memory consumption per pod in MiB.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "container_memory_usage_bytes{container=\"selfheal-app\", namespace=\"selfheal\"} / 1024 / 1024",
+              "legendFormat": "{{ pod }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 15
+              },
+              "unit": "decmbytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 192 },
+                  { "color": "red", "value": 240 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 6,
+          "title": "Pod Restarts (1h window)",
+          "description": "Number of container restarts per pod over the last hour. Alert fires above 3.",
+          "type": "stat",
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 16 },
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "increase(kube_pod_container_status_restarts_total{container=\"selfheal-app\", namespace=\"selfheal\"}[1h])",
+              "legendFormat": "{{ pod }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 3 }
+                ]
+              }
+            }
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "center",
+            "reduceOptions": { "calcs": ["lastNotNull"] }
+          }
+        }
+      ],
+      "refresh": "15s",
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": ["selfheal", "cicd", "ai"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "AI Self-Healing Pipeline",
+      "uid": "selfheal-pipeline",
+      "version": 1
+    }

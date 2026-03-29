@@ -1,0 +1,230 @@
+# ============================================================
+# OPA Gatekeeper Policies for AI Self-Healing CI/CD
+# ============================================================
+# Enforces two critical policies across the cluster:
+#   1. Resource Limits — Every container must declare CPU and memory limits
+#   2. Required Labels — Pods must carry app, version, and team labels
+#
+# Prerequisites:
+#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+#   helm install gatekeeper gatekeeper/gatekeeper --namespace gatekeeper-system --create-namespace
+# ============================================================
+
+---
+# ==================== POLICY 1: RESOURCE LIMITS ====================
+# ConstraintTemplate: defines the Rego logic that checks for resource limits
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredresourcelimits
+  annotations:
+    description: >-
+      Requires all containers to specify CPU and memory resource limits.
+      Prevents unbounded resource consumption that can destabilize nodes.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredResourceLimits
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            resources:
+              type: array
+              description: "List of resource types to require (e.g., cpu, memory)"
+              items:
+                type: string
+            exemptImages:
+              type: array
+              description: "Container images exempt from this policy"
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredresourcelimits
+
+        violation[{"msg": msg}] {
+            container := input.review.object.spec.containers[_]
+            not is_exempt(container)
+            required := input.parameters.resources[_]
+            not has_resource_limit(container, required)
+            msg := sprintf(
+                "Container <%v> in pod <%v> does not have a '%v' resource limit set. "
+                + "All containers must declare resource limits to prevent resource exhaustion.",
+                [container.name, input.review.object.metadata.name, required]
+            )
+        }
+
+        # Also check init containers
+        violation[{"msg": msg}] {
+            container := input.review.object.spec.initContainers[_]
+            not is_exempt(container)
+            required := input.parameters.resources[_]
+            not has_resource_limit(container, required)
+            msg := sprintf(
+                "Init container <%v> in pod <%v> does not have a '%v' resource limit set.",
+                [container.name, input.review.object.metadata.name, required]
+            )
+        }
+
+        has_resource_limit(container, resource) {
+            container.resources.limits[resource]
+        }
+
+        is_exempt(container) {
+            exempt := input.parameters.exemptImages[_]
+            startswith(container.image, exempt)
+        }
+---
+# Constraint: applies the resource-limits template to all pods in selfheal namespace
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredResourceLimits
+metadata:
+  name: require-resource-limits
+  annotations:
+    description: "Enforce CPU and memory limits on all containers in the selfheal namespace"
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "ReplicaSet", "StatefulSet", "DaemonSet"]
+    namespaces:
+      - selfheal
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - monitoring
+  parameters:
+    resources:
+      - cpu
+      - memory
+    exemptImages:
+      - "registry.k8s.io/pause"
+      - "k8s.gcr.io/pause"
+
+---
+# ==================== POLICY 2: REQUIRED LABELS ====================
+# ConstraintTemplate: checks that specified labels are present on resources
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+  annotations:
+    description: >-
+      Requires specified labels on Kubernetes resources.
+      Ensures consistent metadata for monitoring, cost allocation, and ownership.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              description: "List of label keys that must be present"
+              items:
+                type: object
+                properties:
+                  key:
+                    type: string
+                    description: "The label key that must exist"
+                  allowedRegex:
+                    type: string
+                    description: "Optional regex the label value must match"
+            message:
+              type: string
+              description: "Custom error message"
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        # Check top-level metadata labels
+        violation[{"msg": msg}] {
+            provided := {label | input.review.object.metadata.labels[label]}
+            required := {label | label := input.parameters.labels[_].key}
+            missing := required - provided
+            count(missing) > 0
+            msg := sprintf(
+                "Resource <%v/%v> is missing required labels: %v. "
+                + "All resources must have: app, version, team.",
+                [input.review.object.metadata.namespace,
+                 input.review.object.metadata.name,
+                 missing]
+            )
+        }
+
+        # Check label value matches allowed regex (if specified)
+        violation[{"msg": msg}] {
+            label := input.parameters.labels[_]
+            label.allowedRegex != ""
+            value := input.review.object.metadata.labels[label.key]
+            not re_match(label.allowedRegex, value)
+            msg := sprintf(
+                "Label <%v> on resource <%v/%v> has value <%v> which does not match "
+                + "the allowed pattern <%v>.",
+                [label.key,
+                 input.review.object.metadata.namespace,
+                 input.review.object.metadata.name,
+                 value,
+                 label.allowedRegex]
+            )
+        }
+
+        # For Deployments, also check pod template labels
+        violation[{"msg": msg}] {
+            input.review.object.kind == "Deployment"
+            provided := {label | input.review.object.spec.template.metadata.labels[label]}
+            required := {label | label := input.parameters.labels[_].key}
+            missing := required - provided
+            count(missing) > 0
+            msg := sprintf(
+                "Deployment <%v/%v> pod template is missing required labels: %v. "
+                + "Pod templates must carry the same required labels as the parent resource.",
+                [input.review.object.metadata.namespace,
+                 input.review.object.metadata.name,
+                 missing]
+            )
+        }
+---
+# Constraint: enforce app, version, and team labels on deployments and pods
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-standard-labels
+  annotations:
+    description: "Enforce app, version, and team labels on all workloads in selfheal namespace"
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "ReplicaSet", "StatefulSet", "DaemonSet"]
+    namespaces:
+      - selfheal
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - monitoring
+  parameters:
+    labels:
+      - key: app
+        allowedRegex: "^[a-z][a-z0-9-]+$"
+      - key: version
+        allowedRegex: "^v?[0-9]"
+      - key: team
+        allowedRegex: "^[a-z]+"
+    message: >-
+      All resources in the selfheal namespace must have 'app', 'version',
+      and 'team' labels. This is required for monitoring, cost tracking,
+      and incident ownership.

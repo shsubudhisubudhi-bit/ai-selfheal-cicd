@@ -1,60 +1,94 @@
 # AI Self-Healing CI/CD Pipeline
 
-An intelligent CI/CD pipeline that uses GPT-4o to automatically detect, analyze, and recover from deployment failures.
+An intelligent CI/CD pipeline that uses GPT-4o to automatically detect, analyze, and recover from deployment failures. Built with Kubernetes (AKS), Terraform, GitHub Actions, and DevSecOps best practices.
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Developer   │────▶│   GitHub     │────▶│   Docker    │
-│  git push    │     │   Actions    │     │   Build     │
-└─────────────┘     └──────┬───────┘     └──────┬──────┘
-                           │                     │
-                           ▼                     ▼
-                    ┌──────────────┐     ┌─────────────┐
-                    │   Deploy     │────▶│   Health    │
-                    │   to Host    │     │   Check     │
-                    └──────────────┘     └──────┬──────┘
-                                                │
-                                    ┌───────────┴───────────┐
-                                    │                       │
-                                 ✅ Pass               ❌ Fail
-                                    │                       │
-                                    ▼                       ▼
-                             ┌────────────┐        ┌──────────────┐
-                             │  Success!  │        │  AI Healer   │
-                             │  Deploy    │        │  (GPT-4o)    │
-                             │  Complete  │        └──────┬───────┘
-                             └────────────┘               │
-                                                ┌─────────┼─────────┐
-                                                ▼         ▼         ▼
-                                            RETRY    ROLLBACK   ESCALATE
-                                              │         │          │
-                                              ▼         ▼          ▼
-                                          Restart   Previous    Alert
-                                          Container  Version    Team
+┌─────────────┐     ┌──────────────────────────────────────┐
+│  Developer   │────▶│         GitHub Actions                │
+│  git push    │     │                                      │
+└─────────────┘     │  ┌────────┐  ┌────────┐  ┌────────┐ │
+                    │  │ Build  │─▶│Security│─▶│ Push   │ │
+                    │  │ & Test │  │ Scan   │  │ to ACR │ │
+                    │  └────────┘  └────────┘  └───┬────┘ │
+                    └──────────────────────────────┬──────┘
+                                                   │
+                    ┌──────────────────────────────▼──────┐
+                    │           Azure AKS Cluster          │
+                    │                                      │
+                    │  ┌─────────┐  ┌─────────┐           │
+                    │  │ Pod 1   │  │ Pod 2   │  (HPA)    │
+                    │  │ :9090   │  │ :9090   │  2-5 pods │
+                    │  └────┬────┘  └────┬────┘           │
+                    │       └──────┬─────┘                │
+                    │              ▼                       │
+                    │     ┌──────────────┐                │
+                    │     │ LoadBalancer │                │
+                    │     │   Service    │                │
+                    │     └──────────────┘                │
+                    └──────────────────────────────────────┘
+                                   │
+                          ┌────────┴────────┐
+                          │  Health Check   │
+                          └────────┬────────┘
+                                   │
+                       ┌───────────┴───────────┐
+                       │                       │
+                    ✅ Pass               ❌ Fail
+                       │                       │
+                       ▼                       ▼
+                ┌────────────┐        ┌──────────────┐
+                │  Success!  │        │  AI Healer   │
+                │  Pipeline  │        │  (GPT-4o)    │
+                │  Complete  │        └──────┬───────┘
+                └────────────┘               │
+                                   ┌─────────┼─────────┐
+                                   ▼         ▼         ▼
+                               RETRY    ROLLBACK   ESCALATE
 ```
 
-## Components
+## Project Structure
 
-| Component | Description |
-|-----------|-------------|
-| `app/main.py` | Flask API with health endpoint and failure modes |
-| `Dockerfile` | Container definition |
-| `scripts/ai_healer.py` | AI self-healing module (GPT-4o analysis) |
-| `.github/workflows/deploy.yml` | CI/CD pipeline with 4 stages |
-| `terraform/main.tf` | Azure infrastructure as code |
+```
+.
+├── app/
+│   ├── main.py              # Flask API (health, data, process endpoints)
+│   └── requirements.txt     # Python dependencies
+├── k8s/
+│   ├── deployment.yaml      # K8s Deployment + Service + Ingress
+│   ├── hpa.yaml             # Horizontal Pod Autoscaler (2-5 replicas)
+│   └── network-policy.yaml  # Zero-trust network policies
+├── terraform/
+│   └── main.tf              # Azure AKS + ACR + Log Analytics
+├── scripts/
+│   └── ai_healer.py         # AI self-healing module (GPT-4o)
+├── docs/
+│   └── INTERVIEW_SCENARIO.md # Demo walkthrough for interviews
+├── .github/workflows/
+│   └── deploy.yml           # 4-stage CI/CD pipeline
+├── Dockerfile               # Multi-stage container build
+├── docker-compose.yml       # Local development
+└── README.md
+```
 
-## How It Works
+## Pipeline Stages
 
-1. **Push code** → GitHub Actions triggers
-2. **Build** → Docker image created and tested
-3. **Deploy** → Image pushed to server, container started
-4. **Health Check** → Verify app is running
-5. **If failure** → AI analyzes logs and decides:
-   - **RETRY** → Restart container (transient errors)
-   - **ROLLBACK** → Revert to previous stable version
-   - **ESCALATE** → Alert human (critical errors)
+| Stage | What It Does | Tools |
+|-------|-------------|-------|
+| **1. Build & Security** | Build image, run tests, Trivy scan, secret detection | Docker, Trivy, pytest |
+| **2. Deploy** | Push to ACR, deploy to AKS with rolling update | kubectl, AKS |
+| **3. Health & Compliance** | Verify health endpoint, compliance checks | curl, custom checks |
+| **4. AI Self-Heal** | If failure: analyze logs with GPT-4o, auto-recover | OpenAI, Python |
+
+## DevSecOps Features
+
+- **Container scanning**: Trivy checks for CVEs (CRITICAL/HIGH) before deploy
+- **Secret scanning**: Detects hardcoded passwords/keys in source code
+- **Network policies**: Restricts pod communication (zero-trust)
+- **Resource limits**: CPU/memory limits prevent resource exhaustion
+- **Rolling updates**: Zero-downtime deployments with rollback capability
+- **Health probes**: Liveness + readiness probes for pod health
 
 ## Quick Start
 
@@ -73,26 +107,36 @@ curl http://localhost:9090/health
 FAIL_MODE=true docker-compose up --build
 ```
 
+## Azure Deployment
+
+```bash
+# 1. Deploy infrastructure
+cd terraform
+terraform init
+terraform apply -var="subscription_id=YOUR_SUB_ID"
+
+# 2. Get AKS credentials
+az aks get-credentials --resource-group ai-selfheal-rg --name ai-selfheal-aks
+
+# 3. Deploy application
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/hpa.yaml
+kubectl apply -f k8s/network-policy.yaml
+```
+
 ## GitHub Secrets Required
 
 | Secret | Description |
 |--------|-------------|
-| `DEPLOY_HOST` | Server IP address |
+| `DEPLOY_HOST` | Server IP (for VPS fallback) |
 | `DEPLOY_PASSWORD` | Server SSH password |
-| `OPENAI_API_KEY` | OpenAI API key for AI analysis |
+| `OPENAI_API_KEY` | OpenAI API key for AI healer |
+| `AZURE_CREDENTIALS` | Azure service principal (for AKS) |
 
-## Azure Deployment
+## AI Self-Healing Decisions
 
-```bash
-cd terraform
-terraform init
-terraform apply -var="subscription_id=YOUR_SUB_ID"
-```
-
-## Demo Flow
-
-1. Push working code → Pipeline succeeds ✅
-2. Push broken code (FAIL_MODE=true) → Health check fails ❌
-3. AI Self-Healing triggers → Analyzes error with GPT-4o
-4. AI decides ROLLBACK → Reverts to stable version ✅
-5. App recovers automatically 🎉
+| Decision | When | Example |
+|----------|------|---------|
+| **RETRY** | Transient errors | Network timeout, rate limit |
+| **ROLLBACK** | Application errors | Code crash, config error |
+| **ESCALATE** | Infrastructure issues | Disk full, out of memory |

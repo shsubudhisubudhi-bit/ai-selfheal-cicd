@@ -1,9 +1,14 @@
 """
 AI Self-Healing Module
+======================
 Analyzes deployment logs using OpenAI GPT-4o and decides:
 - RETRY: Try deploying again (transient error)
 - ROLLBACK: Revert to previous stable version (code/config error)
 - ESCALATE: Alert human (unknown/critical error)
+
+Integrates with:
+- audit_log.py: Structured logging of every AI decision for compliance
+- dora_metrics.py: DORA metrics tracking (failures, recoveries, MTTR)
 
 Used by GitHub Actions after a failed health check.
 """
@@ -16,9 +21,17 @@ import requests
 from datetime import datetime
 from openai import OpenAI
 
+# Import audit and DORA modules (same directory)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from audit_log import AuditLogger, AuditEntry  # noqa: E402
+from dora_metrics import record_failure, record_recovery  # noqa: E402
+
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 DEPLOY_HOST = os.environ.get("DEPLOY_HOST", "localhost")
 HEALTH_URL = os.environ.get("HEALTH_URL", f"http://{DEPLOY_HOST}:9090/health")
+
+# Initialize the audit logger
+audit = AuditLogger()
 
 SYSTEM_PROMPT = """You are an AI DevOps engineer analyzing deployment failures.
 You will receive application logs and health check results from a failed deployment.
@@ -114,8 +127,8 @@ Respond with a JSON decision."""
         }
 
 
-def execute_decision(decision: dict, container_name: str = "selfheal-app"):
-    """Execute the AI's decision."""
+def execute_decision(decision: dict, audit_entry: AuditEntry, container_name: str = "selfheal-app"):
+    """Execute the AI's decision and update audit/DORA tracking."""
     action = decision.get("decision", "ESCALATE").upper()
     reason = decision.get("reason", "Unknown")
     confidence = decision.get("confidence", 0)
@@ -126,6 +139,22 @@ def execute_decision(decision: dict, container_name: str = "selfheal-app"):
     print(f"CONFIDENCE: {confidence:.0%}")
     print(f"SUGGESTED FIX: {decision.get('suggested_fix', 'N/A')}")
     print(f"{'='*60}\n")
+
+    # Record the decision in audit log
+    audit_entry.set_decision(
+        decision=action,
+        confidence=confidence,
+        reason=reason,
+        suggested_fix=decision.get("suggested_fix", ""),
+    )
+
+    # Record failure in DORA metrics
+    deploy_id = os.environ.get("DEPLOY_ID", audit_entry.deploy_id or "unknown")
+    failure_event = record_failure(
+        deploy_id=deploy_id,
+        description=reason,
+        severity="critical" if action == "ESCALATE" else "warning",
+    )
 
     if action == "RETRY":
         print("[ACTION] Retrying deployment...")
@@ -139,6 +168,8 @@ def execute_decision(decision: dict, container_name: str = "selfheal-app"):
         health = check_health(HEALTH_URL)
         if health["healthy"]:
             print("[SUCCESS] Application recovered after retry!")
+            audit_entry.set_result("success", action_taken="container restart (retry)")
+            record_recovery(deploy_id=deploy_id, method="retry")
             return True
         else:
             print("[FAIL] Retry failed. Escalating to ROLLBACK...")
@@ -164,19 +195,28 @@ def execute_decision(decision: dict, container_name: str = "selfheal-app"):
         health = check_health(HEALTH_URL)
         if health["healthy"]:
             print("[SUCCESS] Rollback successful! App is healthy on previous version.")
+            audit_entry.set_result("success", action_taken="rollback to stable")
+            record_recovery(deploy_id=deploy_id, method="rollback")
             return True
         else:
             print("[FAIL] Rollback also failed. Escalating...")
+            audit_entry.set_result(
+                "failure",
+                action_taken="rollback attempted but failed",
+                error_details="Health check still failing after rollback",
+            )
 
     # ESCALATE
     print("[ESCALATE] Sending alert to operations team...")
     print(f"[ESCALATE] Error summary: {reason}")
+    if audit_entry.result == "":
+        audit_entry.set_result("failure", action_taken="escalated to human operator")
     # In production: send Slack/email/PagerDuty alert
     return False
 
 
 def main():
-    """Main self-healing flow."""
+    """Main self-healing flow with audit logging and DORA tracking."""
     print(f"\n{'='*60}")
     print("AI SELF-HEALING PIPELINE")
     print(f"Timestamp: {datetime.utcnow().isoformat()}")
@@ -195,7 +235,17 @@ def main():
     # Step 2: Gather logs
     print("\n[STEP 2] Gathering application logs...")
     logs = get_container_logs()
-    print(f"  Log lines collected: {len(logs.splitlines())}")
+    log_line_count = len(logs.splitlines())
+    print(f"  Log lines collected: {log_line_count}")
+
+    # Start audit entry
+    audit_entry = audit.start_entry(
+        health_status=health,
+        logs_analyzed=log_line_count,
+        deploy_id=os.environ.get("DEPLOY_ID", ""),
+        version=os.environ.get("APP_VERSION", ""),
+        environment=os.environ.get("DEPLOY_ENV", "production"),
+    )
 
     # Step 3: AI Analysis
     print("\n[STEP 3] Sending to AI for analysis...")
@@ -203,9 +253,12 @@ def main():
 
     # Step 4: Execute
     print("\n[STEP 4] Executing AI decision...")
-    success = execute_decision(decision)
+    success = execute_decision(decision, audit_entry)
 
-    # Step 5: Final status
+    # Step 5: Commit audit log
+    audit.commit(audit_entry)
+
+    # Step 6: Final status
     print(f"\n[RESULT] Self-healing {'SUCCEEDED' if success else 'FAILED'}")
     sys.exit(0 if success else 1)
 
