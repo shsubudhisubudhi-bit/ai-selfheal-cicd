@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: selfheal-app
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     version: v1

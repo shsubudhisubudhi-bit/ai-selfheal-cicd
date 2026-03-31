@@ -30,7 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: selfheal-app-blue
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     slot: blue
@@ -104,7 +104,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: selfheal-app-green
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     slot: green
@@ -180,7 +180,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: selfheal-app-bg
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     team: platform
@@ -205,7 +205,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: selfheal-app-preview
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     role: preview
@@ -228,7 +228,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: blue-green-state
-  namespace: default
+  namespace: selfheal
   labels:
     app: selfheal-app
     team: platform
