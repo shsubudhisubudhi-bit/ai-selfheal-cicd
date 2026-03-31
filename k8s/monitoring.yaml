@@ -17,7 +17,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: selfheal-app-monitor
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     version: v1
@@ -47,7 +47,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: selfheal-app-alerts
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     version: v1

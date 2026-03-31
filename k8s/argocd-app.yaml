@@ -13,7 +13,7 @@ spec:
     path: k8s
   destination:
     server: https://kubernetes.default.svc
-    namespace: selfheal
+    namespace: default
   syncPolicy:
     automated:
       prune: true

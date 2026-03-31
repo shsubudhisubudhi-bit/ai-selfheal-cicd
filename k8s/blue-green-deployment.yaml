@@ -30,7 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: selfheal-app-blue
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     slot: blue
@@ -52,9 +52,9 @@ spec:
     spec:
       containers:
         - name: selfheal-app
-          image: selfhealacr.azurecr.io/selfheal-app:blue
+          image: selfhealacr2026.azurecr.io/selfheal-app:blue
           ports:
-            - containerPort: 9090
+            - containerPort: 8080
               protocol: TCP
               name: http
           env:
@@ -76,7 +76,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
@@ -84,7 +84,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -92,7 +92,7 @@ spec:
           startupProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
             failureThreshold: 10
@@ -104,7 +104,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: selfheal-app-green
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     slot: green
@@ -126,9 +126,9 @@ spec:
     spec:
       containers:
         - name: selfheal-app
-          image: selfhealacr.azurecr.io/selfheal-app:green
+          image: selfhealacr2026.azurecr.io/selfheal-app:green
           ports:
-            - containerPort: 9090
+            - containerPort: 8080
               protocol: TCP
               name: http
           env:
@@ -150,7 +150,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
@@ -158,7 +158,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -166,7 +166,7 @@ spec:
           startupProbe:
             httpGet:
               path: /health
-              port: 9090
+              port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
             failureThreshold: 10
@@ -180,7 +180,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: selfheal-app-bg
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     team: platform
@@ -191,7 +191,7 @@ spec:
   type: LoadBalancer
   ports:
     - port: 80
-      targetPort: 9090
+      targetPort: 8080
       protocol: TCP
       name: http
   # Active slot — change "blue" to "green" to switch traffic
@@ -205,7 +205,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: selfheal-app-preview
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     role: preview
@@ -214,7 +214,7 @@ spec:
   type: ClusterIP
   ports:
     - port: 80
-      targetPort: 9090
+      targetPort: 8080
       protocol: TCP
       name: http
   # Preview slot — opposite of production
@@ -228,7 +228,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: blue-green-state
-  namespace: selfheal
+  namespace: default
   labels:
     app: selfheal-app
     team: platform
