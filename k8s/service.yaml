@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: selfheal-app
+  namespace: default
+  labels:
+    app: selfheal-app
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: selfheal-app
