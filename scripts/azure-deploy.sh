@@ -11,7 +11,7 @@ LOCATION="eastus"
 AKS_CLUSTER="selfheal-aks"
 ACR_NAME="selfhealacr2026"
 NODE_COUNT=1
-NODE_SIZE="Standard_B2s"
+NODE_SIZE="Standard_B2ps_v2"
 
 echo ""
 echo "[1/8] Creating Resource Group..."
