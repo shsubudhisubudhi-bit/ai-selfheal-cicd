@@ -35,6 +35,12 @@ az aks create \
   --enable-managed-identity \
   -o none
 echo "  ✅ AKS cluster created"
+necho "  Configuring ACR access..."
+ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv)
+kubectl create secret docker-registry acr-secret --docker-server=$ACR_LOGIN_SERVER --docker-username=$ACR_NAME --docker-password=$ACR_PASSWORD 2>/dev/null || true
+az acr update -n $ACR_NAME --admin-enabled true -o none
+echo "  ✅ ACR access configured"
 
 echo ""
 echo "[4/8] Getting cluster credentials..."
