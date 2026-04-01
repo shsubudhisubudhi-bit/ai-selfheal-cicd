@@ -30,12 +30,13 @@ az aks create \
   --name $AKS_CLUSTER \
   --node-count $NODE_COUNT \
   --node-vm-size $NODE_SIZE \
-  --attach-acr $ACR_NAME \
   --generate-ssh-keys \
   --enable-managed-identity \
   -o none
 echo "  ✅ AKS cluster created"
-necho "  Configuring ACR access..."
+
+echo "  Configuring ACR access..."
+az acr update -n $ACR_NAME --admin-enabled true -o none
 ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
 ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv)
 kubectl create secret docker-registry acr-secret --docker-server=$ACR_LOGIN_SERVER --docker-username=$ACR_NAME --docker-password=$ACR_PASSWORD 2>/dev/null || true
