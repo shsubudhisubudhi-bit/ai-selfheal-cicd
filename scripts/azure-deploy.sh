@@ -13,8 +13,8 @@ ACR_NAME="selfhealacr2026"
 NODE_COUNT=1
 NODE_SIZE="Standard_D2s_v3"
 
-# Get script directory (so it works from any location)
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# IMPORTANT: Run this script from the repo root directory (where Dockerfile is)
+# Example: cd ai-selfheal-cicd && bash scripts/azure-deploy.sh
 
 echo ""
 echo "[1/8] Creating Resource Group..."
@@ -46,13 +46,13 @@ echo "  ✅ kubectl configured"
 
 echo ""
 echo "[5/8] Building and pushing app image to ACR..."
-az acr build --registry $ACR_NAME --image selfheal-app:v1 --file "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
+az acr build --registry $ACR_NAME --image selfheal-app:v1 --file "./Dockerfile" "$SCRIPT_DIR"
 echo "  ✅ App image pushed to ACR"
 
 echo ""
 echo "[6/8] Deploying app to AKS..."
 # Create namespace first
-kubectl apply -f "$SCRIPT_DIR/k8s/namespace.yaml"
+kubectl apply -f "./k8s/namespace.yaml"
 
 # Create ACR pull secret in selfheal namespace
 ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
@@ -64,8 +64,8 @@ kubectl create secret docker-registry acr-secret \
   --docker-password=$ACR_PASSWORD 2>/dev/null || true
 
 # Deploy app
-kubectl apply -f "$SCRIPT_DIR/k8s/deployment.yaml"
-kubectl apply -f "$SCRIPT_DIR/k8s/service.yaml"
+kubectl apply -f "./k8s/deployment.yaml"
+kubectl apply -f "./k8s/service.yaml"
 echo "  Waiting for pods to be ready..."
 kubectl wait --for=condition=ready pod -l app=selfheal-app -n selfheal --timeout=120s
 echo "  ✅ App deployed with 2 replicas"
@@ -77,7 +77,7 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 echo "  Waiting for ArgoCD to be ready (this may take 2-3 minutes)..."
 kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
 kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
-kubectl apply -f "$SCRIPT_DIR/k8s/argocd-app.yaml"
+kubectl apply -f "./k8s/argocd-app.yaml"
 ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 echo "  ✅ ArgoCD installed"
 
