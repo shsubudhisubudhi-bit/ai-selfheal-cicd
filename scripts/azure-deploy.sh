@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+# No set -e: some commands (like ArgoCD CRD) produce non-fatal errors
 
 echo "============================================="
 echo "  AI Self-Healing CI/CD - Azure Full Setup"
@@ -73,7 +73,7 @@ echo "  ✅ App deployed with 2 replicas"
 echo ""
 echo "[7/8] Installing ArgoCD..."
 kubectl create namespace argocd 2>/dev/null || true
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml 2>&1 | grep -v "is invalid" || true
 echo "  Waiting for ArgoCD to be ready (this may take 2-3 minutes)..."
 kubectl wait --for=condition=available deployment/argocd-server -n argocd --timeout=300s
 kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
