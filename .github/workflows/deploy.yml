@@ -2,13 +2,13 @@ name: CI/CD with AI Self-Healing
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
 
 env:
   CONTAINER_NAME: selfheal-app
-  ACR_NAME: selfhealacr
-  AKS_CLUSTER: ai-selfheal-aks
+  ACR_NAME: selfhealacr2026
+  AKS_CLUSTER: selfheal-aks
   AKS_RG: ai-selfheal-rg
   K8S_NAMESPACE: selfheal
 
@@ -122,9 +122,9 @@ jobs:
         if: ${{ secrets.AZURE_CREDENTIALS != '' }}
         run: |
           az aks get-credentials --resource-group ${{ env.AKS_RG }} --name ${{ env.AKS_CLUSTER }}
+          kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/hpa.yaml
-          kubectl apply -f k8s/network-policy.yaml
+          kubectl apply -f k8s/service.yaml
           kubectl set image deployment/selfheal-app selfheal-app=${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ needs.build.outputs.image_tag }} -n ${{ env.K8S_NAMESPACE }}
           kubectl rollout status deployment/selfheal-app -n ${{ env.K8S_NAMESPACE }} --timeout=120s
 
