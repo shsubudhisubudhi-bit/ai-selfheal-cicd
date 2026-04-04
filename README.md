@@ -140,3 +140,4 @@ kubectl apply -f k8s/network-policy.yaml
 | **RETRY** | Transient errors | Network timeout, rate limit |
 | **ROLLBACK** | Application errors | Code crash, config error |
 | **ESCALATE** | Infrastructure issues | Disk full, out of memory |
+# Pipeline test Sat Apr  4 09:34:30 ESAST 2026
