@@ -101,15 +101,12 @@ jobs:
         with:
           name: docker-image
 
-      # --- Option A: Deploy to AKS (Azure) ---
       - name: Login to Azure
-        if: ${{ secrets.AZURE_CREDENTIALS != '' }}
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Push to ACR
-        if: ${{ secrets.AZURE_CREDENTIALS != '' }}
         run: |
           docker load < image.tar.gz
           az acr login --name ${{ env.ACR_NAME }}
@@ -119,7 +116,6 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:latest
 
       - name: Deploy to AKS
-        if: ${{ secrets.AZURE_CREDENTIALS != '' }}
         run: |
           az aks get-credentials --resource-group ${{ env.AKS_RG }} --name ${{ env.AKS_CLUSTER }}
           kubectl apply -f k8s/namespace.yaml
@@ -127,48 +123,6 @@ jobs:
           kubectl apply -f k8s/service.yaml
           kubectl set image deployment/selfheal-app selfheal-app=${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ needs.build.outputs.image_tag }} -n ${{ env.K8S_NAMESPACE }}
           kubectl rollout status deployment/selfheal-app -n ${{ env.K8S_NAMESPACE }} --timeout=120s
-
-      # --- Option B: Deploy to VPS (fallback for demo) ---
-      - name: Deploy to VPS (demo)
-        if: ${{ secrets.AZURE_CREDENTIALS == '' }}
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: root
-          password: ${{ secrets.DEPLOY_PASSWORD }}
-          script: |
-            docker stop ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-            docker rm ${{ env.CONTAINER_NAME }} 2>/dev/null || true
-            docker tag ${{ env.CONTAINER_NAME }}:latest ${{ env.CONTAINER_NAME }}:stable 2>/dev/null || true
-
-      - name: Copy image to VPS
-        if: ${{ secrets.AZURE_CREDENTIALS == '' }}
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: root
-          password: ${{ secrets.DEPLOY_PASSWORD }}
-          source: "image.tar.gz"
-          target: "/tmp/"
-
-      - name: Load and run on VPS
-        if: ${{ secrets.AZURE_CREDENTIALS == '' }}
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: root
-          password: ${{ secrets.DEPLOY_PASSWORD }}
-          script: |
-            docker load < /tmp/image.tar.gz
-            docker tag ${{ env.CONTAINER_NAME }}:${{ github.sha }} ${{ env.CONTAINER_NAME }}:latest
-            docker run -d \
-              --name ${{ env.CONTAINER_NAME }} \
-              -p 9090:9090 \
-              -e FAIL_MODE=false \
-              -e APP_VERSION=${{ github.sha }} \
-              --restart unless-stopped \
-              ${{ env.CONTAINER_NAME }}:latest
-            rm -f /tmp/image.tar.gz
 
   # --- Stage 3: Health Check & Compliance ---
   health-check:
@@ -179,10 +133,19 @@ jobs:
       - name: Wait for startup
         run: sleep 15
 
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ env.AKS_RG }} --name ${{ env.AKS_CLUSTER }}
+
       - name: Check application health
         id: health
         run: |
-          HEALTH_URL="http://${{ secrets.DEPLOY_HOST }}:9090/health"
+          APP_IP=$(kubectl get svc selfheal-app -n selfheal -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          HEALTH_URL="http://$APP_IP/health"
           HTTP_CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" $HEALTH_URL || echo "000")
           echo "status=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "Health check status: $HTTP_CODE"
@@ -232,8 +195,6 @@ jobs:
       - name: Run AI Self-Healing Analysis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          HEALTH_URL: http://${{ secrets.DEPLOY_HOST }}:9090/health
         run: |
           echo "=== AI SELF-HEALING TRIGGERED ==="
           python scripts/ai_healer.py
@@ -241,7 +202,8 @@ jobs:
       - name: Verify recovery
         run: |
           sleep 10
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.DEPLOY_HOST }}:9090/health)
+          APP_IP=$(kubectl get svc selfheal-app -n selfheal -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://$APP_IP/health)
           if [ "$HTTP_CODE" == "200" ]; then
             echo "✅ AI Self-Healing SUCCEEDED! Application recovered automatically."
           else
