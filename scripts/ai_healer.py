@@ -68,7 +68,18 @@ def check_health(url: str) -> dict:
 
 
 def get_container_logs(container_name: str = "selfheal-app", lines: int = 50) -> str:
-    """Get recent Docker container logs."""
+    """Get recent container logs from Docker or Kubernetes."""
+    # Try kubectl first (for AKS/K8s environments)
+    try:
+        result = subprocess.run(
+            ["kubectl", "logs", "-l", "app=selfheal-app", "-n", "selfheal", "--tail", str(lines)],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.stdout.strip():
+            return result.stdout + result.stderr
+    except Exception:
+        pass
+    # Fallback to Docker (for VPS/local environments)
     try:
         result = subprocess.run(
             ["docker", "logs", "--tail", str(lines), container_name],
@@ -158,17 +169,20 @@ def execute_decision(decision: dict, audit_entry: AuditEntry, container_name: st
 
     if action == "RETRY":
         print("[ACTION] Retrying deployment...")
-        subprocess.run(
-            ["docker", "restart", container_name],
-            capture_output=True, timeout=30
+        # Try kubectl first, fallback to docker
+        result = subprocess.run(
+            ["kubectl", "rollout", "restart", "deployment/selfheal-app", "-n", "selfheal"],
+            capture_output=True, text=True, timeout=30
         )
-        print("[ACTION] Container restarted. Waiting 10s for health check...")
+        if result.returncode != 0:
+            subprocess.run(["docker", "restart", container_name], capture_output=True, timeout=30)
+        print("[ACTION] Deployment restarted. Waiting 30s for health check...")
         import time
-        time.sleep(10)
+        time.sleep(30)
         health = check_health(HEALTH_URL)
         if health["healthy"]:
             print("[SUCCESS] Application recovered after retry!")
-            audit_entry.set_result("success", action_taken="container restart (retry)")
+            audit_entry.set_result("success", action_taken="deployment restart (retry)")
             record_recovery(deploy_id=deploy_id, method="retry")
             return True
         else:
@@ -177,21 +191,22 @@ def execute_decision(decision: dict, audit_entry: AuditEntry, container_name: st
 
     if action == "ROLLBACK":
         print("[ACTION] Rolling back to previous stable version...")
-        # Stop broken container
-        subprocess.run(["docker", "stop", container_name], capture_output=True, timeout=15)
-        subprocess.run(["docker", "rm", container_name], capture_output=True, timeout=15)
-        # Deploy previous version (tagged as 'stable')
-        subprocess.run([
-            "docker", "run", "-d",
-            "--name", container_name,
-            "-p", "9090:9090",
-            "-e", "FAIL_MODE=false",
-            "-e", "APP_VERSION=rollback",
-            "--restart", "unless-stopped",
-            f"{container_name}:stable"
-        ], capture_output=True, timeout=30)
+        # Try kubectl rollback first (K8s/AKS)
+        result = subprocess.run(
+            ["kubectl", "rollout", "undo", "deployment/selfheal-app", "-n", "selfheal"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            print(f"[ACTION] kubectl rollback: {result.stdout.strip()}")
+        else:
+            # Fallback: patch FAIL_MODE to false
+            subprocess.run([
+                "kubectl", "set", "env", "deployment/selfheal-app",
+                "FAIL_MODE=false", "-n", "selfheal"
+            ], capture_output=True, text=True, timeout=30)
+            print("[ACTION] Patched FAIL_MODE=false")
         import time
-        time.sleep(10)
+        time.sleep(30)
         health = check_health(HEALTH_URL)
         if health["healthy"]:
             print("[SUCCESS] Rollback successful! App is healthy on previous version.")
