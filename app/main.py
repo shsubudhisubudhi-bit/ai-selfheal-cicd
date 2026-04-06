@@ -96,4 +96,5 @@ def process():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 9090))
     logger.info(f"Starting app on port {port} | FAIL_MODE={FAIL_MODE}")
+    logger.info(f"Added test log app on port {port} | FAIL_MODE={FAIL_MODE}")
     app.run(host="0.0.0.0", port=port, debug=False)
