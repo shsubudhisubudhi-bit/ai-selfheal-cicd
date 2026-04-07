@@ -30,8 +30,8 @@ def health():
     if FAIL_MODE:
         logger.error("HEALTH CHECK FAILED - Application in failure mode")
         return jsonify({
-            "status": "unhealthy",
-            "error": "Application is in failure mode",
+            "status": "unhealthy_123",
+            "error": "Application is in failure mode, intentional fialure",
             "timestamp": datetime.utcnow().isoformat(),
         }), 500
 
