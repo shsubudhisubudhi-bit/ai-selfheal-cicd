@@ -46,7 +46,9 @@ echo "  ✅ kubectl configured"
 
 echo ""
 echo "[5/8] Building and pushing app image to ACR..."
-az acr build --registry $ACR_NAME --image selfheal-app:v1 --file Dockerfile .
+az acr login --name $ACR_NAME
+docker build -t $ACR_NAME.azurecr.io/selfheal-app:v1 .
+docker push $ACR_NAME.azurecr.io/selfheal-app:v1
 echo "  ✅ App image pushed to ACR"
 
 echo ""
