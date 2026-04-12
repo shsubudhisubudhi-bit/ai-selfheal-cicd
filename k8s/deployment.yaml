@@ -7,7 +7,7 @@ metadata:
     app: selfheal-app
     version: v1
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: selfheal-app
