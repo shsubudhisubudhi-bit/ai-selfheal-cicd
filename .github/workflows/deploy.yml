@@ -7,7 +7,7 @@ on:
 
 env:
   CONTAINER_NAME: selfheal-app
-  ACR_NAME: selfhealacrkumar
+  ACR_NAME: selfhealacr042026
   AKS_CLUSTER: selfheal-aks
   AKS_RG: ai-selfheal-rg
   K8S_NAMESPACE: selfheal
