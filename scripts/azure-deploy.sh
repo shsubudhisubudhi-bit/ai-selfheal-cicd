@@ -9,7 +9,7 @@ echo "============================================="
 RESOURCE_GROUP="ai-selfheal-rg"
 LOCATION="westus2"
 AKS_CLUSTER="selfheal-aks"
-ACR_NAME="selfhealacrkumar"
+ACR_NAME="selfhealacr042026"
 NODE_COUNT=1
 NODE_SIZE="Standard_D2s_v3"
 
