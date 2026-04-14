@@ -2,7 +2,7 @@
 # No set -e: some commands (like ArgoCD CRD) produce non-fatal errors
 
 echo "============================================="
-echo "  AI Self-Healing CI/CD - Azure Full Setup"
+echo "  AI Self-Healing CI/CD - Azure Full Setup   "
 echo "============================================="
 
 # Configuration
