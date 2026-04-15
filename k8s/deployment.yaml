@@ -24,7 +24,7 @@ spec:
     spec:
       containers:
         - name: selfheal-app
-          image: selfhealacr042026.azurecr.io/selfheal-app:v1
+          image: selfhealacr042026.azurecr.io/selfheal-app:latest
           ports:
             - containerPort: 9090
               protocol: TCP
