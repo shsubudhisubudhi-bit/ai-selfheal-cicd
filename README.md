@@ -1,7 +1,7 @@
 # AI Self-Healing CI/CD Pipeline
 
 An intelligent CI/CD pipeline that uses GPT-4o to automatically detect, analyze, and recover from deployment failures. Built with Kubernetes (AKS), Terraform, GitHub Actions, and DevSecOps best practices.
-New account configured S49340134  new acr selfheal042006 ...
+New account configured S49340134  new acr selfheal042006 fix by Fabian the acr point to this acr...
 
 ## Architecture
 
