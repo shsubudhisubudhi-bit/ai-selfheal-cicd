@@ -183,6 +183,57 @@ jobs:
             exit 1
           fi
 
+      - name: Print all URLs and credentials
+        if: always()
+        run: |
+          echo ""
+          echo "============================================="
+          echo "  DEPLOYMENT COMPLETE - ALL ACCESS DETAILS"
+          echo "============================================="
+          echo ""
+
+          APP_IP=$(kubectl get svc selfheal-app -n ${{ env.K8S_NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "pending")
+          ARGOCD_IP=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "not-installed")
+          ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d 2>/dev/null || echo "not-installed")
+
+          echo "📱 APP (live endpoints)"
+          echo "   URL:       http://$APP_IP"
+          echo "   HEALTH:    http://$APP_IP/health"
+          echo "   DATA:      http://$APP_IP/api/data"
+          echo "   PROCESS:   http://$APP_IP/api/process (POST)"
+          echo ""
+          echo "🎯 ARGOCD (GitOps)"
+          if [ "$ARGOCD_IP" != "not-installed" ] && [ -n "$ARGOCD_IP" ]; then
+            echo "   URL:       https://$ARGOCD_IP (accept SSL warning)"
+            echo "   USER:      admin"
+            echo "   PASSWORD:  $ARGOCD_PASS"
+          else
+            echo "   STATUS: not installed yet. Run: kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+          fi
+          echo ""
+          echo "📊 GRAFANA (monitoring dashboards) - via port-forward"
+          echo "   CMD:       kubectl port-forward -n monitoring svc/prometheus-grafana 3000:80"
+          echo "   THEN:      Azure Cloud Shell > Web Preview > Port 3000"
+          echo "   USER:      admin"
+          echo "   PASSWORD:  admin123"
+          echo ""
+          echo "📈 PROMETHEUS (metrics) - via port-forward"
+          echo "   CMD:       kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090"
+          echo "   THEN:      Azure Cloud Shell > Web Preview > Port 9090"
+          echo ""
+          echo "☁️  AZURE PORTAL"
+          echo "   URL:       https://portal.azure.com"
+          echo "   RESOURCES: Resource Groups > ai-selfheal-rg"
+          echo ""
+          echo "🧪 TEST AI SELF-HEALING"
+          echo "   1. Edit k8s/deployment.yaml line 33: value: \"false\" -> value: \"true\""
+          echo "   2. Commit & push to master"
+          echo "   3. Watch this pipeline: deploy succeeds -> health fails -> AI heals automatically"
+          echo ""
+          echo "============================================="
+          echo "  STATUS: ${{ steps.health.outputs.healthy == 'true' && 'ALL GREEN ✅' || 'SELF-HEAL WILL TRIGGER' }}"
+          echo "============================================="
+
   # --- Stage 4: AI Self-Healing (only on failure) ---
   ai-self-heal:
     name: AI Self-Healing
