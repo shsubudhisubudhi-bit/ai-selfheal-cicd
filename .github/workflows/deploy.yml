@@ -119,6 +119,14 @@ jobs:
         run: |
           az aks get-credentials --resource-group ${{ env.AKS_RG }} --name ${{ env.AKS_CLUSTER }}
           kubectl apply -f k8s/namespace.yaml
+          # Create/update ACR pull secret so pods can pull images
+          ACR_PASS=$(az acr credential show --name ${{ env.ACR_NAME }} --query "passwords[0].value" -o tsv)
+          kubectl delete secret acr-secret -n ${{ env.K8S_NAMESPACE }} --ignore-not-found
+          kubectl create secret docker-registry acr-secret \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --docker-server=${{ env.ACR_NAME }}.azurecr.io \
+            --docker-username=${{ env.ACR_NAME }} \
+            --docker-password=$ACR_PASS
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
           kubectl set image deployment/selfheal-app selfheal-app=${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ needs.build.outputs.image_tag }} -n ${{ env.K8S_NAMESPACE }}
